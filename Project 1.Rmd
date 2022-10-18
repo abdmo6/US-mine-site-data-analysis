@@ -1,0 +1,529 @@
+---
+title: "Computational Data Science Project 1"
+author: "Syed Abdul Moiz \n 22458076"
+date: "22/08/2021"
+output:
+  html_document:
+    code_folding: hide
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+## Introduction
+
+The data set is a smaller portion of a large dataset with information of number of incidents and injuries in various mine sites across the US.
+the data includes types of mine, nature of incidents, date and times of
+the incidents and geographical location of the incidents.
+
+We will start by loading these relevant libraries.
+
+```{r, collapse=TRUE, class.source = 'fold-show'}
+library(tidyverse)
+library(ggplot2)
+library(scales)
+library(dplyr)
+library(gridExtra)
+library(stringr)
+library(DT)
+library(sp)
+library(maps)
+library(tigris)
+library(doBy)
+library(usmap)
+library(plotly)
+```
+
+The data will be imported from the ".csv" file saved in the working
+directory.
+
+```{r, class.source = 'fold-show'}
+my_dataglob <-read.csv('us_data_2000.csv', header=T, sep=",")
+
+```
+
+Lets check for data column names to identify the variables.
+
+```{r}
+colnames(my_dataglob)
+```
+
+A quick view of the columns of "my_dataglob" object shows us that it has 57 variables.
+
+Lets use the head function for only the first row.
+
+```{r}
+head(my_dataglob, 1)
+```
+
+The head function give us quick overview of the first row of data set, values of each column are visible and we can
+identify the relevant columns to our analysis.
+
+
+Lets check for data class in each column to make manipulation easier.
+```{r, class.source = 'fold-show'}
+sapply(my_dataglob,class)
+```
+
+The data class is  visible through the above function, it shows us the type of observations for each variable.
+
+We will start by segregating relevant column data, we will remove
+additional/ repeated/ redundant information. The new data frame will be
+saved into another variable named "mydataw".
+
+```{r, collapse=TRUE, class.source = 'fold-show'}
+mydataw<-my_dataglob[,-c(7, 56)] #removes document no, closed document columns
+#makes dataframe for working
+```
+
+```{r, collapse=TRUE}
+checkyr<-table(mydataw$CAL_YR)
+yrdf<-as.data.frame(checkyr)
+low<-yrdf[1,1]
+high<-yrdf[16, 1]
+#high<-max(yrdf$Var1)
+range<-paste("Year", low,"to","Year", high, sep=" ")
+```
+
+Lets also check the date range of the data so we are aware from which years is the data from.
+
+```{r}
+cat(range)
+```
+
+Lets check for columns that have NA values and also the count of NA values.
+
+```{r}
+nacount<-apply(is.na(mydataw),2,  sum) #get a look at NA in Data, 2 is margin value for columns
+dispna<- (nacount>0)
+nacount[dispna]
+```
+
+As we can see that the "NA" are predominantly in experience and lost time injury related columns. We will alter this as per requirement for data visualization.
+
+Lets start by checking how many mine sites have had multiple incidents
+in this data set.
+
+```{r, results='hide', warning=FALSE}
+mincd<-table(mydataw$MINE_ID)# table of mine incidents, mine id with no. of incident
+tdf<-as.data.frame(mincd) # temporary dataframe
+nmines <- c() #vector count
+for (i in 1:max(tdf$Freq)) {
+  nmines <- c(nmines, 0)
+} #creating a vector based on highest number of incidents reported from mine
+a<-max(tdf$Freq)
+s<-seq(0,a)
+for (i in s){
+a<-(tdf$Freq==i)
+nmines[i]<-sum(a)
+}
+nmines<-cbind(nmines, c(1:length(nmines)))
+mineincd<-as.data.frame(nmines) #gives a dataframe of no of incidents vs No. of mines
+mineincd<-mineincd[mineincd$V2>1,]
+plot1<-ggplot(mineincd)+geom_histogram(mapping=aes(x=V2, y=nmines), stat="identity", binwidth=1)+labs(x="No. of Incidents", y="No.of mines") +  annotate("text", x = 25, y = 80, label = paste("Outlier of ","data, mine"," with 26 incidents", sep="\n")) + annotate("text", x=6, y=120, label=paste("Most data is"," concentrated here", "most mines have", "reported 2 incident", sep="\n")) + scale_x_continuous(breaks=c(1,2,3,4,5,6,7,8,9,10,15,20,26))+scale_y_continuous(breaks=c(1, 10, 25, 50,100, 125, 150))
+
+```
+
+The histogram shows how many mines have had a certain number of incidents more than 1, as almost 730 mines have reported 1 incident at least we have removed that from the graph to make the plot more visually aesthetic:
+
+```{r fig.height = 6}
+plot1
+```
+
+We can see that very few mines have reported incidents
+greater than 10. The one outlier is a mine that has reported 26 incidents.
+
+Now let us check which operators were running the mine site as per permission granted by MSHS with respect to no. of incident reported. 
+
+```{r}
+opincd<-table(mydataw$OPERATOR_NAME)
+tdf1<-as.data.frame(opincd)#data frame with operator name and no. of incidents
+```
+
+Since most companies have reported one incident, lets look at multiple incidents reported by Operators. 
+
+
+```{r, warning=FALSE}
+tdf2<-tdf1$Freq>=5
+tdf3<-tdf1[tdf2,]
+more5plot<-ggplot(tdf3)+geom_histogram(mapping=aes(x=Freq, y=Var1), stat="identity")+scale_x_continuous(breaks= c(5,10,15,20,25,30, 35, 40))+labs(x="No. of Incidents", y="Operator Name")
+
+tdf2<-tdf1$Freq<5 & tdf1$Freq>=2
+tdf3<-tdf1[tdf2,]
+more2incdplot<-ggplot(tdf3)+geom_histogram(mapping=aes(x=Freq, y=Var1), stat="identity") +labs(x="No. of Incidents", y="Operator Name")
+
+tdf2<-tdf1$Freq<2
+tdf3<-tdf1[tdf2,]
+row<-length(tdf3$Freq)
+colnames(tdf3)<-c("Operator Name", "No.Of Incident")
+rownames(tdf3)<-c(1:row)
+#plot4<-ggplot(tdf3)+geom_histogram(mapping=aes(x=Freq, y=Var1), stat="identity")
+
+high25df <- tdf1[order( tdf1$Freq, decreasing = TRUE),] 
+high25df<-high25df[1:25,]
+top25plot<-ggplot(high25df)+geom_histogram(mapping=aes(x=Freq, y=reorder(Var1, Freq)), stat="identity", binwidth=1)+labs(x="No. of Incidents", y="Operator Name", main="Top 20 incidents reported by Operator Name" )
+```
+
+We would like to check the top 25 operators, in terms of incidents reported. This is shown below:
+
+```{r, fig.height=6}
+top25plot #top 25 Incidents reported by Operator Name
+```
+
+Alternatively we can check how many operators have reported a certain number of incidents. Since more than 560 operators have reported 1 incident lets check the distribution of operators per incident count greater than 1.
+
+
+```{r, warning=FALSE}
+op_incd<-table(mydataw$OPERATOR_NAME)# table of operators names  with no. of incident
+tdf4<-as.data.frame(op_incd) # temporary dataframe
+nops <- c() #vector count
+for (i in 1:max(tdf4$Freq)) {
+  nops <- c(nops, 0)
+} #creating a vector based on highest number of incidents reported from operator
+a<-max(tdf4$Freq)
+s<-seq(0,a)
+for (i in s){
+a<-(tdf4$Freq==i)
+nops[i]<-sum(a)
+}
+nops<-cbind(nops, c(1:length(nops)))
+opsincd<-as.data.frame(nops)
+opsincd<-opsincd[opsincd$V2>1,]
+opcountplot<-ggplot(opsincd)+geom_histogram(mapping= aes(x=V2, y=nops), stat="identity")+labs(x="No. of Incidents", y="No. of Operators")+scale_y_continuous(breaks=c(1,10,25, 50, 100, 200))+scale_x_continuous(breaks=c(2,5,10,15,20, 25, 30, 35))
+opcountplot
+```
+
+
+
+Next, lets check the frequency of incidents occuring in various areas of the mine.
+
+```{r, warning=FALSE}
+sub_incd<-table(mydataw$SUBUNIT)# table of operators names  with no. of incident
+tdf5<-as.data.frame(sub_incd) # temporary dataframe
+
+areaofmineplot<-ggplot(tdf5)+geom_bar(mapping=aes(x=reorder(Var1,Freq), y= Freq), stat="identity", binwidth=1)+labs(x="Area Subunit", y="No. of Incidents")+ coord_flip()+scale_y_continuous(breaks=c(1, 50, 100, 200, 300, 400, 500, 600, 700))
+areaofmineplot
+```
+
+
+
+We can ascertain that most incident occured underground, in the open pit area or the mill operation area.
+
+
+
+Next, lets check the distribution of incidents over the Fiscal years and then Fiscal Quarters. The bar chart shows the total number of incidents in the year.
+
+```{r, warning=FALSE}
+fisyr<-table(mydataw$FISCAL_YR)
+fisyrdf<-as.data.frame(fisyr)
+fisqtr<-table(mydataw$FISCAL_YR, mydataw$FISCAL_QTR)
+tdf6<-as.data.frame(fisqtr)
+QTR<-tdf6$Var2
+totalplot<-ggplot(tdf6)+geom_bar(mapping=aes(x=Var1, y= Freq), stat="identity", binwidth=1)+labs(x="Year", y="No. of Incidents")+scale_y_continuous(breaks=c(0, 25, 50, 75, 100, 125, 150, 175, 200))+theme(legend.position="bottom")
+Years<-tdf6$Var1
+
+plot8<-ggplot(tdf6)+geom_density(mapping = aes(x = Freq,))+ labs(x="Year")+theme(legend.position="bottom")
+
+tdf6<-tdf6[tdf6$Freq>0,]
+QTRS<-tdf6$Var2
+
+qtrplot1<-ggplot(tdf6)+geom_smooth(mapping = aes(x = Var1, y=Freq, group= Var2, col=QTRS), se=F, method= loess)+ labs(x="Years", y="Number of Incidents")+theme(legend.position=c(0.8,0.8)) #+geom_point(mapping = aes(x = Var1, y=Freq, group= Var2, col=QTRS))
+totalplot
+
+
+```
+
+The line chart shows the distribution of incidents within every quarter over FY2000 to FY2015.
+
+
+```{r, warning=FALSE, message=FALSE}
+qtrplot1
+
+```
+
+
+We can see that over the years the no. of incidents has been gradually decreasing for every quarter and are following the yearly trend from the bar chart.
+
+Moving on, we can identify the degree of injury due to all these incidents. This will help identify what are most common injuries as a result of these incidents.
+
+```{r, warning=FALSE}
+deginj<-table(mydataw$DEGREE_INJURY)
+tdf7<-as.data.frame(deginj)
+
+ggplot(tdf7)+geom_histogram(mapping=aes(x=Freq, y=reorder(Var1, Freq)), stat="Identity")+labs(x="No. of Incidents", y="Degree of Injury")
+```
+
+The degree of injury tells us the nature of the injury based on the consequence, for instance, most incidents resulted in injuries that caused the worker to stay away from work for a number of days.
+
+
+```{r, warning=FALSE, message=F}
+tdf8<-as.data.frame(table((mydataw$FIPS_STATE_CD)))#state locations
+xx<-fips_info()$fips #get state code fips vector
+yy<-setdiff(xx, tdf8$Var1) #check missing states between data and total stataes
+yy<-yy[-c(2:7)]
+yy<-cbind(yy,0)#make 2 columns for missing states
+yy<-as.data.frame(yy)# make dataframe for missing state
+colnames(yy)<-c("Var1", "Freq") #label columns for missing states
+tdf8<-rbind(tdf8,yy) #add to data
+aa<-c(tdf8$Var1)
+aa<-as.numeric(as.character(aa)) #change fips code value in data from 1 to 01 for matching, required for left join function
+bb<-fips_info(aa)
+colnames(tdf8)<-c("fips", "Freq" )
+tdf8[] <- lapply(tdf8, as.character)
+tdf8$fips[1:6]<-c("01",'04', "05", "06", "08", "09")
+tdf8<-left_join(tdf8, bb, by="fips")
+
+
+colnames(tdf8)[4]<-"region"
+tdf8$region<-tolower(tdf8$region)# return lower case names from uppercase
+usstates<-map_data("state") #map data
+mapdata<-left_join(tdf8, usstates)
+
+
+m1<-ggplot(data = mapdata) + geom_polygon(aes(x=long, y=lat, group=group, fill=region) ) + coord_equal() + geom_path(aes(x = long, y = lat, group=group), color="black", size=0.3) + coord_map(projection = "albers", lat0 = 39, lat1 = 45)+theme(legend.position="bottom") #map plot of us states by region
+  
+
+plot10<-m1+geom_text(
+    data = mapdata %>%
+      group_by(group) %>%
+      summarise(Lat = mean(c(max(lat), min(lat))),
+                Long = mean(c(max(long), min(long)))) %>%
+      mutate(state = group) %>%
+      left_join(mapdata, by = c("state" = "group")),
+    aes(x = Long, y = Lat, label = mapdata$Freq ), size=2.8
+    ) #+coord_flip()
+# added incident number as text to plot, clearer in interactive map, remove hashtag before ggplotly(plot10) command to view, is heavy and may take time to load
+
+```
+
+
+The map below shows us the state count of number of incidents over the years we can see that some states either have no incidents due to missing data or because the mining industry is non-existent over there. Similarly, we can identify states where most incidents occurred and check if they have proper legislation and safety standards in place.
+
+
+```{r , fig.height=15, fig.width=10, warning=F}
+plot10
+
+```
+
+
+Now, let us take a look at incidents that took place in an underground mining area and see which areas are more prone to these incidents.
+
+```{r, class.source = 'fold-show'}
+
+ugloc<-table(mydataw$UG_LOCATION)
+tdf9<-as.data.frame(ugloc)
+```
+
+A quick look in the above dataframe tells us the Data has a Variable "No Value Found" which depicts the incident was not underground as we can see from the area subunit graph that although the highest no. of incident occurred underground, they were not all the incidents. So, we can remove this variable to view our data here. Using cleaning techniques we get the below graph.
+
+```{r, warning=FALSE}
+tdf9<-tdf9[!tdf9$Var1=="NO VALUE FOUND",]# data cleaning
+
+
+uglocplot<-ggplot(tdf9)+geom_histogram(aes(x=Freq, y=reorder(Var1,Freq)), stat="identity", binwidth=1)+scale_x_continuous(breaks=c(20,50,70,100, 120,150, 170, 200, 220))+labs(title="Underground Incident Area with Incidents Number", x="No. of Incidents", y="Underground Locations")
+uglocplot
+```
+
+
+
+
+
+Let us also look at the Underground Mining Method being used, lets try to see it along with the previous plot of underground location. This will show us which mining method was being used when these incidents occurred in these locations. the Frequency here depicts the number of incident counts.
+
+
+```{r, warning=FALSE}
+ugmeth<-table(mydataw$UG_MINING_METHOD, mydataw$UG_LOCATION)
+tdf10<-as.data.frame(ugmeth)
+tdf10<-tdf10[!tdf10$Var1=="NO VALUE FOUND",]
+
+ugloc_mm_plot<-ggplot(tdf10, mapping = aes(x = Var2, y = Var1)) + 
+  geom_count(mapping = aes(size=Freq, color=Freq)) +
+  ggtitle("UG Location and Mining Methods vs No. of Incidents")+ theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+labs(x="UG Locations of Incidents", y="UG Miining Method of Incidents")
+  ugloc_mm_plot
+```
+
+
+
+
+Now lets look at some of the mining equipment in use when these incidents occurred, since there is too many data instances lets look at the top 20 equipment in use when incidents occurred.
+
+
+```{r, warning=FALSE}
+minequip<-table(mydataw$MINING_EQUIP)
+tdf11<-as.data.frame(minequip)
+tdf11<-tdf11[!tdf11$Freq==0 & !tdf11$Var1=="NO VALUE FOUND",]
+
+top20eqdf <- tdf11[order( tdf11$Freq, decreasing = TRUE),] 
+top20eqdf<-top20eqdf[1:20,]
+
+
+top20eq_plot<-ggplot(top20eqdf)+geom_histogram(aes(x=Freq, y=reorder(Var1, Freq)), stat="identity")+scale_x_continuous(breaks=c(1, 10, 25, 50, 75, 100, 125, 150, 175, 200, 225))+labs(x="No. of Incidents", y="Mining Equipment")
+top20eq_plot
+```
+
+
+
+Now lets take a look at the equipment in use when incident occurred along with the data of the equipment manufacturer.
+
+This is an interactive plot so please view frequency of incidents by hovering over count shapes.
+
+The trend here shows that most of the equipment in use came from manufacturers that were either "Not Listed", "Not on this List, or "Not reported" which mean s that there is high possibility that these equipments were not manufactured by qualified manufacturers as per approved standards.
+
+
+```{r, warning=FALSE}
+minmfr<-table(mydataw$EQUIP_MFR_NAME, mydataw$MINING_EQUIP)
+tdf12<-as.data.frame(minmfr)
+tdf12<-tdf12[!tdf12$Var1=="NO VALUE FOUND" & !tdf12$Var2=="NO VALUE FOUND" & !tdf12$Freq==0,]
+
+mfr_plot<-ggplot(tdf12, mapping = aes(x = Var1, y = Var2)) + 
+  geom_count(mapping = aes(size=Freq, color=Freq)) +
+  ggtitle("Mining Equipment & Manufacturer vs No. of Incidents")+ theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+labs(x="Mining Equipment", y="Equip Manufacturer")
+
+```
+
+```{r, fig.height=12, fig.width=12, warning=FALSE}
+ggplotly(mfr_plot)
+
+```
+
+
+We can see that most of the equipment involved in accidents belongs to manufacturers that are either not on the list or have not been reported by the company which would mean that these were not upto the industry standard.
+
+
+Next we can see the type of accident and nature of accident expressed with the number of incidents. Again, this is an interactive graph to provide better visualization of data.
+
+
+```{r, warning=FALSE}
+classify<-table(mydataw$CLASSIFICATION, mydataw$ACCIDENT_TYPE)
+tdf13<-as.data.frame(classify)
+tdf13<-tdf13[!tdf13$Var1=="NO VALUE FOUND" & !tdf13$Var2=="NO VALUE FOUND" & !tdf13$Freq==0,]
+
+
+plot14<-ggplot(tdf13, mapping = aes(x = Var2, y = Var1)) + 
+  geom_count(mapping = aes(size=Freq, color=Freq)) +
+  ggtitle("Classification of Accident and Accident type vs No. of Incidents")+ theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+labs(x="Accident type", y="Classification of Accident (Circumstances leading to Accident)")
+```
+
+
+```{r, fig.height=10, fig.width=10}
+ggplotly(plot14)
+```
+
+
+
+Next we will see the number of incidents with respect to the occupation of those involved in these incidents, telling us which jobs are more prone to incidents. As it is a massive dat set, lets review the top 20 occupations involved in incidents.
+
+
+```{r, warning=FALSE}
+occup<-table(mydataw$OCCUPATION)
+tdf14<-as.data.frame(occup)
+tdf14<-tdf14[!tdf14$Var1=="NO VALUE FOUND" & !tdf14$Freq==0,]
+
+top20occdf <- tdf14[order( tdf14$Freq, decreasing = TRUE),] 
+top20occdf<-top20occdf[1:20,]
+
+
+plot15<-ggplot(top20occdf)+geom_histogram(aes(x=Freq, y=reorder(Var1, Freq)), stat="identity")+labs(x="No. of Incidents", y="Occupation", title="Occupation vs No. of Incidents")+scale_x_continuous(breaks=c(1,10,50,100, 150, 200, 250, 300, 350, 400))
+
+
+
+```
+
+```{r, fig.width=10}
+plot15
+
+```
+
+
+We can see that the maintenance and repair team were involved in most inncidents which makes sense as they are involved directly in plant maintenance and operation, exposing them more to these incidents.
+
+If we would like to look at the activities that these workers were performing when these incidents occurred we can look at another plot, however again we will only see the top 15 activities.
+
+```{r}
+activ<-table(mydataw$ACTIVITY)
+tdf15<-as.data.frame(activ)
+tdf15<-tdf15[!tdf15$Var1=="NO VALUE FOUND",]
+
+top15actdf <- tdf15[order( tdf15$Freq, decreasing = TRUE),] 
+top15actdf<-top15actdf[1:15,]
+
+
+plot16<-ggplot(top15actdf)+geom_bar(aes(x=Freq, y=reorder(Var1, Freq)),stat="identity")+labs(x="No. of Incidents", y="Activity being Performed", title="Activity vs No. of Incidents")+scale_x_continuous(breaks=c(1, 10, 25,50,100,150,200,250,300))
+plot16
+```
+
+We can see that those handling materials and supplies or involved with machine tools werethe ones most involved in incidents.
+
+Moving on, lets see the source of injuries. Lets plot the data for the top 10 sources of injuries in these incidents.
+
+```{r}
+injury<-table(mydataw$INJURY_SOURCE)
+tdf16<-as.data.frame(injury)
+tdf16<-tdf16[!tdf16$Var1=="NO VALUE FOUND",] #cleaning
+
+
+
+top10injdf <- tdf16[order( tdf16$Freq, decreasing = TRUE),] 
+top10injdf<-top10injdf[1:10,] #top 10
+
+
+injury_plot<-ggplot(top10injdf)+geom_bar(aes(x=Freq, y=reorder(Var1, Freq)),stat="identity")+labs(x="No. of Incidents", y="Source of Injury", title="Injury Source vs No. of Incidents")+scale_x_continuous(breaks=c(1, 10, 25,50,100,150,200,250,300))
+injury_plot
+
+
+
+```
+
+
+We see that most common source of injury was metal pipe or wire lying around or being used leading to an accident resulting in injury.
+
+
+
+Lets view the nature of injury data to see the extent of the injury, again, lets review only the top 10 results.
+
+```{r}
+natinj<-table(mydataw$NATURE_INJURY)
+tdf17<-as.data.frame(natinj)
+tdf17<-tdf17[!tdf17$Var1=="NO VALUE FOUND",] #cleaning
+
+
+
+top10nat_injdf <- tdf17[order( tdf17$Freq, decreasing = TRUE),] 
+top10nat_injdf<-top10nat_injdf[1:10,] #top 10
+
+
+natinj_plot<-ggplot(top10nat_injdf)+geom_bar(aes(x=Freq, y=reorder(Var1, Freq)),stat="identity")+labs(x="No. of Incidents", y="Nature of Injury", title="Nature of Injury vs No. of Incidents")+scale_x_continuous(breaks=c( 10, 50,100,150,200,250,300, 400, 500, 550))
+natinj_plot
+
+
+
+```
+
+We can see above that the most common nature of the injury was sprain, strain followed by cuts and wounds. This can help us plan first aid response as this shows the most likely nature of injury in mining incidents.
+
+
+
+Finally, let us look in which form of mining industries most incidents occurred. This will help us plan which industry needs most urgent policy reforms in terms of safety standards.
+
+```{r, warning=FALSE}
+ind_check<-table(mydataw$COAL_METAL_IND)
+tdf18<-as.data.frame(ind_check)
+tdf18<-tdf18[!tdf18$Var1=="NO VALUE FOUND",] #cleaning
+
+
+
+
+
+
+ind_plot<-ggplot(tdf18)+geom_histogram(aes(x=Var1, y= Freq),stat="identity", binwidth=1)+labs(x="Type of Industry", y="Number of Incidents", title="Industry Type vs No. of Incidents")+scale_y_continuous(breaks=c( 0, 250, 500, 750, 1000, 1250))+ theme(aspect.ratio = 2/1)
+ind_plot
+
+```
+
+As we can see the metal mining industry has reported more incidents overall than the coal industry, but considering that metal mining may include several different metal being mined we have to see coal as the single most common source of incidents in the mining industry and we need to implement better safety codes in the industry to prevent these incidents, which we have observed have reduced over the years.
+   
