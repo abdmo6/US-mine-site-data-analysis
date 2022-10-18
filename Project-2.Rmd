@@ -1,0 +1,839 @@
+---
+title: "Computational Data Science Project 2"
+author: "Syed Abdul Moiz \n 22458076"
+date: "05/10/2021"
+output:
+  html_document:
+    code_folding: hide
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Introduction
+The project is designed to build on the data set visualised in Project 1. The data set has the incidents and injuries data across mine sites in the US over the period of 2000-2015. We will analyse this data to perform predictive modelling on a response variable. This is the complete injuries data set, not the small one. It has been taken to close the gap between the response variable which was around 90% to 10% for the response variable's binary output, a new data set with 10000 variables would be selected from this data set with distribution close to 40-60% for 0 and 1 respectively, enabling to build a better model. 
+
+Let's start by loading the libraries and reading the CSV file into a dataframe object.
+
+
+
+```{r, warning=F, error=F, message=FALSE, class.source = 'fold-show'}
+library(ggplot2)
+library(gridExtra)
+library(dplyr)
+library(ggthemes)
+library(tidyr)
+library(knitr)
+library(ROCR)
+library(rpart)
+library(tidyverse)
+library(xgboost)
+library(vtreat)
+library(scales)
+library(stringr)
+library(DT)
+library(sp)
+library(maps)
+library(tigris)
+library(doBy)
+library(usmap)
+library(plotly)
+library(mice)
+library(lime)
+library('e1071')
+library(stringdist)
+library(class)
+```
+
+```{r, echo=TRUE}
+setwd("/Users/US/projectdir")
+my_dataG<-read.csv("/Users/US/projectdir/us_data.csv", header=T, sep=",")
+
+```
+
+
+Let's check the variable names in the data frame.
+
+```{r}
+colnames(my_dataG)
+```
+
+
+## Data Cleaning
+
+From the above output we have a clearer idea of the variables in the data. The response variable would be the number of injuries in an incident and we would try to use the modelling to predict the if injuries occur from an incident. Being able to make a predictive model essentially allows us to look at the factors that lead to incidents that cause injuries, knowing this, we can arm ourselves to preempt any such risks. 
+
+
+
+```{r}
+my_data<-my_dataG
+nrows_data<-nrow(my_data)
+no_inj1<-nrow(my_data[my_data["NO_INJURIES"]==1,])
+no_inj0<-nrow(my_data[my_data["NO_INJURIES"]==0,])
+no_inj1n<-nrow(my_data[my_data["NO_INJURIES"]>1,])
+injtext<-c("Number of Injuries Equal to")
+perc1<-(no_inj1/nrows_data)*100
+perc0<-(no_inj0/nrows_data)*100
+perc1n<- (no_inj1n/nrows_data)*100
+
+cat(paste(injtext," 1:" , no_inj1,"\n", injtext," 0:" , no_inj0,"\n", injtext," >1:" , no_inj1n ))
+cat(paste("Percentage"," 1:" , perc1,"\n", "Percentage"," 0:" , perc0,"\n", "Percentage"," >1:" , perc1n ))
+```
+
+As mentioned above in the introduction, the percentage of the response is almost 12-88% for the 0 and 1 response respectively, this will greatly effect the model so to minimize this effect, we will extract a smaller dataset of 10000 variables with a ratio of 40-60% to see better modelling results.
+
+
+```{r}
+
+all1<-my_data[my_data["NO_INJURIES"]>=1,]
+all0<-my_data[my_data["NO_INJURIES"]==0,]
+
+set.seed(06011995)
+index1<-sample(1:nrow(all1), 6000)
+all1<-all1[index1,]
+set.seed(06011995)
+index0<-sample(1:nrow(all0), 4000)
+all0<-all0[index0,]
+
+#all1$NO_INJURIES <- runif(dim(all1)[1])
+#all1 <- subset(all1, NO_INJURIES>=0.88)
+newdata<-rbind(all1, all0)
+
+nrows_data<-nrow(newdata)
+no_inj1<-nrow(newdata[newdata["NO_INJURIES"]==1,])
+no_inj0<-nrow(newdata[newdata["NO_INJURIES"]==0,])
+no_inj1n<-nrow(newdata[newdata["NO_INJURIES"]>1,])
+injtext<-c("Number of Injuries Equal to")
+perc1<-(no_inj1/nrows_data)*100
+perc0<-(no_inj0/nrows_data)*100
+perc1n<- (no_inj1n/nrows_data)*100
+
+cat(paste(injtext," 1:" , no_inj1,"\n", injtext," 0:" , no_inj0,"\n", injtext," >1:" , no_inj1n ))
+cat(paste("Percentage"," 1:" , perc1,"\n", "Percentage"," 0:" , perc0,"\n", "Percentage"," >1:" , perc1n ))
+
+
+
+rm("my_data", "my_dataG")
+```
+
+The response variable is generally taken as a binary, since most of the data set has 0 or 1 number of injuries in an incident, except for a few cases where we find multiple injuries, we will assume that number of injuries greater than or equal to 1 are incidents where injuries will occur and 0 will represent that no one will be injured in that accident. 
+
+So essentially, we will be checking if the incident is likely to have left injured people depending on the various other factors in the data.
+
+So, let's convert the data of the response variable greater than 1 as 1 and also rename the variable as response.
+
+```{r}
+names(newdata)[names(newdata) == "NO_INJURIES"] <- "response" #change variable name
+newdata$response<- ifelse(newdata$response>1, 1, newdata$response) #assign response 1 to injuries greater than 1 in number to mean that incident will cause injuries
+```
+
+
+Now, let us clean the data set by removing variables that are unique for every observation such as the assigned ID's.We will also remove duplicated data, i.e. the data listed in categories by its name and its corresponding code identifying the description. We will remove the code and keep the categorical description variable.
+
+
+```{r}
+delcols<-c(1,2,4,6,7,8,10,16,19,21,23,25,27,29,31, 37, 39,41, 43, 45, 47,51,52, 54,55,56)
+## Removed Variables:
+cat(colnames(newdata[delcols]),sep = "\n")
+newdata<-newdata[,-(delcols)]
+
+```
+
+
+Now that we have a cleaner data set, let us look at the number of NA values and see if we can remove these or change these in the data.
+
+```{r}
+nacount<-apply(is.na(newdata),2,  sum) #get a look at NA in Data, 2 is margin value for columns
+dispna<- (nacount>0)
+nacount[dispna]
+
+```
+
+As seen above the 'NA' values are predominantly in 5 variables, the Total experience, mine experience, job experience, restricted work days and days lost to injury. We will try to impute these values from the dataset by the MICE package in 'R'. 
+
+
+```{r, fig.asp=2, results="hide", class.source="fold.show", warning=FALSE, class.source = 'fold-show',eval=TRUE}
+
+imp_vars<-names(nacount[dispna])
+imp_data<-newdata[,imp_vars]
+
+#md.pattern(imp_data)
+#NA Pattern in Data
+
+## MICE function from 'MICE' Package
+
+imputed_Data <- mice(imp_data, m=1, maxit = 50, method = 'pmm', seed = 500)
+#summary(imputed_Data)
+#imputed_Data$imp$SHIFT_BEGIN_TIME
+completeData <- complete(imputed_Data)
+newdata[,imp_vars]<-completeData
+```
+
+Now we check the entire dataset for NA's.
+
+```{r}
+nacount<-apply(is.na(newdata),2,  sum) #get a look at NA in Data, 2 is margin value for columns
+dispna<- (nacount>0)
+nacount[dispna]
+
+
+```
+ 
+There are no more NA's left in our data after using the imputation function.
+
+Now, let us split the data into three sets the training set, the calibration set and then the test set.
+
+```{r}
+set.seed(060195)
+newdata$setgroup <- runif(dim(newdata)[1])
+dtrain <- subset(newdata, setgroup<=0.9)
+dtest <- subset(newdata, setgroup>0.9)
+
+# names of columns that are categorical type and numerical type
+vars <- setdiff(colnames(dtrain), c("response", 'setgroup'))
+catvars <- vars[sapply(dtrain[, vars], class) %in%
+c('factor', 'character')]
+numvars <- vars[sapply(dtrain[, vars], class) %in%
+c('numeric', 'integer')]
+# remove the original tables
+rm(newdata)
+# split dtrain into a training set and a validation (or calibration) set
+calset <- rbinom(n=dim(dtrain)[1], size=1, prob=0.1)>0
+dcalb <- subset(dtrain, calset)
+dtrain <- subset(dtrain, !calset)
+
+dtrain<-subset(dtrain, select= -setgroup)
+dcalb<-subset(dcalb, select= -setgroup)
+dtest<-subset(dtest, select= -setgroup)
+
+cat(paste("Observations:","\n", "Training Set:", dim(dtrain)[1], "\n","Calibration Set:", dim(dcalb)[1],"\n", "Test Set:", dim(dtest)[1]))
+
+```
+ 
+## Null Model
+ 
+Let's start with a simple NULL model. We will print out the model summary and see it's various parameters.
+
+```{r}
+nullmod <- glm(formula= "response~1" , data=dtrain, family=binomial(link="logit"))
+dtrain$pred <- predict(nullmod, newdata=dtrain, type="response")
+dcalb$pred <- predict(nullmod, newdata=dcalb, type="response")
+dtest$pred<-predict(nullmod, newdata=dtest, type="response")
+summary(nullmod)
+
+```
+
+To check the performance of the null model, lets use the parameters of Accuracy, Recall, Precision, F1 score and AUC. Please note that the data is almost 60% positive and 40% negative.
+
+```{r}
+calcAUC <- function(ypred, ytrue) {
+  perf <- performance(prediction(ypred, ytrue), 'auc')
+  as.numeric(perf@y.values)
+}
+response<-'response'
+truth<- '1'
+
+TN <- 0; TP <- sum(dcalb[,response] == 1); # using threshold 0.5
+FN <- 0; FP <- sum(dcalb[,response] == 0); # using threshold 0.5
+cat("nrow(dcalb):", calbrow<-nrow(dcalb),";", "TP:", TP, "TN:", TN, "FP:", FP, "FN:", FN)
+
+
+cat(paste("Accuracy:",(accuracy <- (TP + TN) / calbrow), "\n", "Precision:", precision <- TP/(TP + FP)), "\n", "Recall:", recall <- TP/(TP + FN),"\n","AUC Calibration Set:", (AUC <- calcAUC(dcalb[,"pred"], dcalb[,response])))
+
+logLikelihood <- function(ypred, ytrue) {
+  sum(ifelse(ytrue, log(ypred), log(1-ypred)), na.rm=T)
+}
+
+logNull <- logLikelihood(sum(dcalb[,response]==truth)/nrow(dcalb), dcalb[,response]==truth)
+
+cat("The log likelihood of the Null model is:", logNull)
+
+```
+
+We can see above that the null model is best given by the AUC score which highlights the mean 0.5 line on the plot, based on the probability from 2 levels of the response variable. So this means that it is only a baseline and does not help us in any regard to predict between an incident happening that will cause or will not cause injuries, since the probability for both based on this variable is the same.
+
+
+## Single Variable Models
+
+Next, we can try to see the effect of all the categorical variables on the response variable. This means that we will examine other variables and how they effect the probability of incidents resulting in causing injuries or not causing injuries.
+
+### Categorical Variables
+
+```{r}
+catvars
+mkpred_c <- function(outCol, varCol, appCol) {
+  pPos <- sum(outCol==truth)/length(outCol)
+  naTab <- table(as.factor(outCol[is.na(varCol)]))
+  pPosWna <- (naTab/sum(naTab))[truth]
+  vTab <- table(as.factor(outCol), varCol)
+  pPosWv <- (vTab[truth,]+1.0e-3*pPos)/(colSums(vTab)+1.0e-3)
+  pred <- pPosWv[appCol]
+  pred[is.na(appCol)] <- pPosWna
+  pred[is.na(pred)] <- pPos
+  pred
+}
+# now go through all the categorical variables in the `catVars` vector
+# and perform the predictions. The outputs are stored back into the
+# data frame.
+for (i in catvars) {
+  txt1 <- paste('pred', i, sep='')
+  dtrain[,txt1] <- mkpred_c(dtrain[,response], dtrain[,i], dtrain[,i])
+  dcalb[,txt1] <- mkpred_c(dtrain[,response], dtrain[,i], dcalb[,i])
+  dtest[,txt1] <- mkpred_c(dtrain[,response], dtrain[,i], dtest[,i])
+}
+
+
+
+sel_catvars <- c()
+minDrop <- 100  # may need to adjust this number
+cat("Deviance Reduction in each categorical variable")
+for (i in catvars) {
+  txt2 <- paste('pred', i, sep='')
+  devDrop <- 2*(logLikelihood(dcalb[,txt2], dcalb[,response]==truth) - logNull)
+  if (devDrop >= minDrop) {
+    cat(sprintf("%6s, deviance reduction: %g\n", i, devDrop))
+    sel_catvars <- c(sel_catvars, txt2)
+  }
+}
+```
+
+```{r, results='hide'}
+
+cat("AUC from all the variables")
+for(i in catvars) {
+  pi <- paste('pred', i, sep='')
+  aucTrain <- calcAUC(dtrain[,pi], dtrain[,response])
+  if (aucTrain >= 0.7) {
+    aucCal <- calcAUC(dcalb[,pi], dcalb[,response])
+      print(sprintf(
+        "%s: trainAUC: %4.3f; calibrationAUC: %4.3f;",
+        pi, aucTrain, aucCal))
+    }
+}
+
+
+
+```
+ 
+From the above code, we can see that some of the variables have a very high deviance reduction, however, most of these variables are directly related to the injury, which means that after an injury has been reported it has been added to this variable as data. We will overlook these variables and focus on variables that can be predicted, as factors that make a difference, being responsible for causing injuries in incidents.
+
+Lets identify the categorical variables that are important factors that can be addressed to reduce risks at the mine sites and separate them from ones that cannot be used to prevent the incidents, since they record data pertaining to the injury that has occurred in the incident i.e. they already report that injury has occurred and cannot be used to predict if injury will occur e.g "Degree of Injury" data.
+
+```{r}
+
+cat("Categorical variables that we can remove because they are biased already as based on injuries having occurred.")
+rm_catvars<- c("DEGREE_INJURY", "CLASSIFICATION","ACCIDENT_TYPE", "ACTIVITY","OCCUPATION" ,"INJURY_SOURCE", "NATURE_INJURY", "INJ_BODY_PART", "TRANS_TERM","predDEGREE_INJURY", "predCLASSIFICATION","predACCIDENT_TYPE", "predACTIVITY","predOCCUPATION" ,"predINJURY_SOURCE", "predNATURE_INJURY", "predINJ_BODY_PART", "predTRANS_TERM")
+
+
+cat(rm_catvars, sep=",")
+dtrain <- dtrain[!names(dtrain) %in% rm_catvars]
+dcalb <- dcalb[!names(dcalb) %in% rm_catvars]
+dtest <- dtest[!names(dtest) %in% rm_catvars]
+
+sel_catvars<-setdiff(sel_catvars,rm_catvars)
+
+catvars<-c()
+for (i in sel_catvars) {
+  # retrieve the original variable name (character location 5 onward)
+  orig_v <- substring(i, 5)
+  catvars<-c(catvars,orig_v)
+}
+
+cat("AUC from the retained Categorical Variables:")
+
+for(i in catvars) {
+  pi <- paste('pred', i, sep='')
+  aucTrain <- calcAUC(dtrain[,pi], dtrain[,response])
+  if (aucTrain >= 0.6) {
+    aucCal <- calcAUC(dcalb[,pi], dcalb[,response])
+      print(sprintf(
+        "%s: trainAUC: %4.3f; calibrationAUC: %4.3f;",
+        pi, aucTrain, aucCal))
+    }
+}
+```
+The above AUC scores indicate top 7 relevant categorical variables that we can identify to use in the multi-variable model. We must first examine each in detail and this will be done in a later section.
+
+For now, lets look at the numerical variables and get the predictions and the performance measures of the top variables in terms of deviance reduction score on the response variable.
+
+### Numerical Variables
+
+```{r}
+
+mkpred_n <- function(outCol, varCol, appCol) {
+  cuts <- unique(as.numeric(
+    quantile(varCol, probs=seq(0, 1, 0.1), na.rm=T)))
+  varC <- cut(varCol, cuts)
+  appC <- cut(appCol, cuts)
+  mkpred_c(outCol, varC, appC)
+}
+
+for (i in numvars) {
+  txt3 <- paste('pred', i, sep='')
+  dtrain[,txt3] <- mkpred_n(dtrain[,response], dtrain[,i], dtrain[,i])
+  dcalb[,txt3] <- mkpred_n(dtrain[,response], dtrain[,i], dcalb[,i])
+  dtest[,txt3] <- mkpred_n(dtrain[,response], dtrain[,i], dtest[,i])
+}
+
+
+cat("Deviance reduction in top 4 Numerical Variables")
+sel_numvars <- c()
+minDrop <- 30  # may need to adjust this number
+for (v in numvars) {
+  txt4 <- paste('pred', v, sep='')
+  devDrop <- 2*(logLikelihood(dcalb[,txt4], dcalb[,response]==truth) - logNull)
+  if (devDrop >= minDrop) {
+    cat(sprintf("%6s, deviance reduction: %g\n", v, devDrop))
+    sel_numvars <- c(sel_numvars,txt4 )
+  }
+}
+
+numvars<-c()
+for (i in sel_numvars) {
+  # retrieve the original variable name (character location 5 onward)
+  orig_v <- substring(i, 5)
+  numvars<-c(numvars,orig_v)
+}
+
+cat("AUC score for each numerical variable:")
+
+for(i in numvars) {
+  txt5 <- paste('pred', i, sep='')
+  aucTrain <- calcAUC(dtrain[,txt5], dtrain[,response])
+  if (aucTrain >= 0.5) {
+    aucCal <- calcAUC(dcalb[,txt5], dcalb[,response])
+    
+      print(sprintf(
+        "%s: trainAUC: %4.3f; calibrationAUC: %4.3f",
+        txt5, aucTrain, aucCal))
+    
+  }
+}
+
+
+
+```
+
+
+Lets combine the top selected variables from the categorical and numerical variables and see their AUC score.
+
+### Combined Categorical & Numerical Variables Investigation
+After the AUC score, lets see the factors in each variable. This will allow us to see  the factors that influence the trends on injuries occurring in an incident. We will discuss individually if the factors and their effects on prediction makes the variable suitable for multi-variable model.
+
+```{r}
+(sel_vars <- c(sel_catvars, sel_numvars))
+
+cat("AUC score for the combined variables as benchmark")
+for (i in sel_vars) {
+  # retrieve the original variable name (character location 5 onward)
+  orig_v <- substring(i, 5)
+  cat(sprintf("Variable %6s: AUC = %g\n", orig_v, calcAUC(dtest[,i], dtest[,response]==truth)))
+}
+
+
+```
+
+
+
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE, fig.height=15}
+orgvars<-c()
+for (i in sel_vars) {
+  # retrieve the original variable name (character location 5 onward)
+  orig_v <- substring(i, 5)
+  orgvars<-c(orgvars,orig_v)
+}
+#redefine the datasets to only selected variables
+
+redef<-c(orgvars,sel_vars, "response")
+dtrain<-dtrain[,redef]
+dcalb<-dcalb[,redef]
+dtest<-dtest[,redef]
+
+
+```
+
+#### Variable Plots
+
+```{r, warning=FALSE, message=FALSE}
+#develop plots for each variable and save in list to cal one by one later
+myplots <- vector('list', length(orgvars))
+for (i in seq_along(orgvars)) {
+  message(i)
+  myplots[[i]] <- local({
+    i <- i
+    p1 <- ggplot(dtest) + geom_bar(aes(x=dtest[,orgvars[i]], fill=dtest[,sel_vars[i]], stat="count")) +
+      theme(axis.text.x=element_text(angle=45,hjust=1,vjust=1))+ xlab(orgvars[i])
+    
+  })
+}
+tdf<-as.data.frame(table(dtest$CONTROLLER_NAME))
+high25df <- tdf[order( tdf$Freq, decreasing = TRUE),] 
+high25df<-high25df[1:25,]
+rr<-c(high25df$Var1)
+curdtest<-dtest[rr,]
+ggplot(curdtest) + geom_bar(aes(x=curdtest[,orgvars[1]], fill=curdtest[,sel_vars[1]], stat="count")) +
+  theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ xlab(orgvars[1])+coord_flip()
+    
+
+```
+
+The graph above shows the top 25 levels of the controller name as per the count of incidents. So, basically these controllers have had the top 25 incident count. Amongst them we can see that the probability of the incident causing injury varies from controller to controller, for instance, the probability of incident causing injury in the company Dicalite Management is higher than 0.75 and it is less than 0.25 for the EL Paso Energy, which means the former company needs to have better safety standards.
+
+
+
+
+```{r}
+myplots[2]
+```
+
+The graph above depicts the subunit data, which identifies the location within the mine where the incident happened, we can see that the probability of having injuries in an incident is less than 0.4 in the underground location on the mine, where the incident count is higher and the probability of injury in an incident is above 0.8 in locations such as the open pit, strip, mill operation and operation plant.
+
+It can be concluded that more care must be taken to prevent incidents in the mill operation, open pit, strip and operation plant section where the chance of injuries in incident is greater. This could mean use of better PPE's and implementation of HSE policies that reduce the risk of incidents and potential of injury in an incident.
+
+Let's take a look at few other examples now.
+
+
+
+
+```{r}
+
+myplots[3]
+```
+
+This plot shows that the incidents occurring at the intersection and vertical shafts in the underground mine are less likely to cause injuries than incidents that occur in face area of the under ground mine, however, the "NO Value Found" has a higher effect so we might consider not to include this in our multi variable model.
+
+
+
+```{r}
+
+myplots[4]
+```
+
+The plot above shows that the continuous mining method used underground has probability of 0.4 of incidents causing injuries but again the data has a large proportion of "No Value Found" and can be used to highlight the non-conventional methods being used could be the ones causing injuries in incidents, however, we will try not to use this in the multi variable model.
+
+
+
+```{r, warning=FALSE, message=FALSE}
+
+tdf1<-as.data.frame(table(dtest$MINING_EQUIP))
+high25df1 <- tdf1[order( tdf1$Freq, decreasing = TRUE),] 
+high25df1<-high25df1[1:20,]
+rr1<-c(high25df1$Var1)
+curdtest1<-dtest[rr1,]
+ggplot(curdtest1) + geom_bar(aes(x=curdtest1[,orgvars[5]], fill=curdtest1[,sel_vars[5]], stat="count")) +
+  theme(axis.text.x=element_text(angle=45,hjust=1,vjust=1))+ xlab(orgvars[5])
+    
+```
+
+
+This data from the mining equipment involved in incidents shows that the incidents occurring with equipment involving handtools have a probability higher than 0.8 in causing injuries whereas incidents involving elevators, skips, cage, buckets etc have a probability less than 0.4 to cause injuries. This implies that more strict checks must be kept on people working with handtools since they are more likely to injure themselves. However, the "No Value Found" count is still very high to be certain about the predicted probabilities.
+
+
+```{r, fig.asp=1}
+
+myplots[6]
+```
+
+The graph about the "Immediately Notifiable Incidents" to the governmnet authority carries some interesting information. The probability of injuries in incidents that were immediately notifiable such as "Gas of Dust Ignition","Hoisting", "Innumdation", "Roof fall", etc. were below 0.25, whereas the probability of incidents not marked as immediately notifiable was higher than 0.75. Based on this recommendations can be made to update government policy and adopt stricter measures to prevent incidents that are not marked as immediately notifiable and yet are more likely to cause injuries.
+
+```{r, warning=FALSE}
+
+ggplot(dtest) + geom_bar(aes(x=dtest[,orgvars[7]], fill=dtest[,sel_vars[7]], stat="count"), width=0.2) + xlab(orgvars[7])
+```
+
+Finally the plot of industries with incidents indicate that the probability of incidents causing injuries in coal industries is less than 0.5 whereas the likelihood of incidents resulting in injuries in the metal industries is higher than 0.8. It can be recommended that the metal industry needs to have safety policy review to ensure that injuries as a result of incidents are reduced.
+
+Now, lets look at the numerical variable factor levels.
+
+
+```{r, warning=FALSE, message=FALSE}
+
+dnplots <- vector('list', length(orgvars))
+for (i in seq_along(orgvars)) {
+  message(i)
+  dnplots[[i]] <- local({
+    i <- i
+    p1 <- ggplot(dtest) + geom_density(aes(x=dtest[,sel_vars[i]], color=as.factor(response))) +
+      theme(axis.text.x=element_text(angle=90,hjust=1,vjust=0.5))+ xlab(sel_vars[i])
+    
+  })
+}
+fips_tbl<-table(dtest[,"FIPS_STATE_CD"], dtest[,"predFIPS_STATE_CD"])
+## FIPS variable prediction table and levels
+fips_tbl[c("18","21", "42", "51", "54", "8") , colnames(fips_tbl)<0.5 | colnames(fips_tbl)==0.643269989932434| colnames(fips_tbl)>0.88]
+
+```
+
+The table above shows the probability of incidents causing injuries with respect to each state. We can see the that the states such as the Virginia (51), West Virginia (54), Indiana (18), Kentucky (21) have a probability of incidents causing injuries around 0.456 and 0.46 respectively, while states like Pensylvania (42) and Colarado (8) have the probabilities around 0.64 and 0.888 respectively. This shows that some of the states like Virginia, have set better safety standards for machinery and procedures that ensure that even if incidents occur the chances of injury are low while other states suich as Wyoming and Pensylvania need to do better to curb injuries as a result of incidents.
+
+#### Density Plots
+
+```{r}
+
+dnplots[9]
+```
+
+The density plot of the shift begin time points to the fact that for the prediction is generally good except for a small region on the right where the prediction is actually wrong.
+
+```{r}
+
+dnplots[10]
+```
+
+The density plot for restricted days can be used to tell if injuries occurred in an incident, so the prediction from this would be in the terms that for a certain value of days restricted, what was the likelihood that an incident caused injuries. The lower values imply that despite an incident, there was '0' restricted days of work activity. We can see that for prediction values below 0.55, the response is '0' while it is '1' on the higher end of the probability values.
+
+
+```{r}
+
+dnplots[11]
+```
+
+The density plot of "Days lost" is also useful and relays that for an incident that caused days lost what would be the probability the incident had caused injury. For predicted values below 0.51 the response is '0' and for greater than 0.51 it is '1'
+
+
+Now lets compare the ROC of various single variable models made from the categorical variables discussed above. We will select the top 4 based on ROC and the amount of "No Value Found" data for use in multivariable models.
+
+
+
+#### ROC Curve for all the variables
+
+```{r}
+
+
+
+library(ROCit)
+# colour_id 1-7 are: black,red,green,blue,cyan,purple,gold
+plot_roc <- function(predcol, outcol, colour_id=2, overlaid=F) {
+  ROCit_obj <- rocit(score=predcol, class=outcol==truth)
+  par(new=overlaid)
+  plot(ROCit_obj, col = c(colour_id, 1),
+       legend = F, YIndex = FALSE, values = FALSE)
+}
+
+par(mfrow=c(2,4))
+plot_roc(dcalb[,sel_vars[1]], dcalb[,response]) #red
+legend("bottomright", legend = c(orgvars[1]), col = 2, cex=0.5)
+plot_roc(dcalb[,sel_vars[2]], dcalb[,response], colour_id=3)
+legend("bottomright", legend = c(orgvars[2]), col = 3, cex=0.5)
+plot_roc(dcalb[,sel_vars[3]], dcalb[,response], colour_id=4)
+legend("bottomright", legend = c(orgvars[3]), col = 4, cex=0.5)
+plot_roc(dcalb[,sel_vars[4]], dcalb[,response], colour_id=5)
+legend("bottomright", legend = c(orgvars[4]), col = 5, cex=0.5)
+plot_roc(dcalb[,sel_vars[5]], dcalb[,response], colour_id=6)
+legend("bottomright", legend = c(orgvars[5]), col = 6, cex=0.5)
+plot_roc(dcalb[,sel_vars[6]], dcalb[,response], colour_id=7)
+legend("bottomright", legend = c(orgvars[6]), col = 7, cex=0.5)
+plot_roc(dcalb[,sel_vars[7]], dcalb[,response], colour_id=1)
+legend("bottomright", legend = c(orgvars[7]), col = 1, cex=0.5)
+plot_roc(dcalb[,sel_vars[8]], dcalb[,response], colour_id=2)
+legend("bottomright", legend = c(orgvars[8]), col = 2, cex=0.5)
+
+sel_vars<-setdiff(sel_vars,c("predUG_MINING_METHOD","predMINING_EQUIP", "predIMMED_NOTIFY"))
+
+orgvars<-c()
+for (i in sel_vars) {
+  # retrieve the original variable name (character location 5 onward)
+  orig_v <- substring(i, 5)
+  orgvars<-c(orgvars,orig_v)
+}
+
+```
+
+
+The selected variables are based on the ROCR and the logical reasoning discussed above based on the "level" values of each variable e.g the "No Value Found" based skewness in "IMMED_NOTIFY" column makes it unsuitable for use in further modelling.
+
+```{r}
+
+cat("Selected 8 Variables for Multi Variable Modelling")
+sel_vars
+
+```
+
+
+
+## Multi-Variable Model using Logistic Regression
+
+Next, we can put a logistic model based on these selected 8 variables through the LIME to see the explanation for each and see the greatest effect which variables have on the test set predictions.
+
+(Note that the "Controller Name" variable had too many levels to go through the log regression and was removed for this multi variable modelling, however it is present in other multivariable models)
+
+```{r, fig.width=10, warning=F, message=FALSE}
+cases <- c(3,10,900,970)
+
+example <- dtest[cases,orgvars[2:8]]
+
+cmodel <- caret::train(x = dtrain[orgvars[2:8]], y = as.factor(dtrain[,"response"]), method = "glm",  family = binomial(link="logit"), metric = "Accuracy")
+explainer_logr <- lime(dtrain[,orgvars[2:8]], model=cmodel, bin_continuous = TRUE, n_bins = 10)
+explanation_logr <- lime::explain(example, explainer_logr, n_labels = 1, n_features = 8)
+##AIC score of the Logistic model based on 7 variables (3 categorical, 4 numerical)
+
+
+cmodel
+
+
+
+```
+
+### LIME Plot
+
+```{r}
+cat("The LIME plot compares the output feature weights of the selected variables on few instances of the test set")
+plot_features(explanation_logr)
+
+```
+
+
+
+We can see the LIME highlights the features that support or contradict the probability, since the modelling is based on the single variable model probabilities. The major weight in support and contradiction is applied from the similar features in all 4 displayed cases, this also corresponds with the AUC calculated above.
+
+```{r, warning=FALSE}
+
+pred_train_roc <- predict(cmodel, newdata=dtrain)
+pred_calb_roc <- predict(cmodel, newdata=dcalb)
+pred_test_roc <- predict(cmodel, newdata=dtest)
+
+```
+
+
+
+```{r}
+cat("ROC curve for the 3 sets using the logistic regression multivariable model:")
+par(mfrow=c(1,3))
+plot_roc(as.numeric(pred_train_roc), dtrain[,"response"])
+legend("bottomright", legend = c("Pred_Train"), col = 1, cex=0.8)
+
+plot_roc(as.numeric(pred_calb_roc), dcalb[,"response"],colour_id=3)
+legend("bottomright", legend = c("Pred_Calb"), col= 3, cex=0.8)
+
+plot_roc(as.numeric(pred_test_roc), dtest[,"response"],colour_id=4)
+legend("bottomright", legend = c("Pred_Test"), col= 4, cex=0.8)
+```
+The ROC plots for each set are shown above using the predictions made from the logistic multi-variable model. We can also calculate the AUC of these as shown above.
+
+```{r}
+cat("AUC score of 3 sets using the Logistic Regression Multi Variable Model")
+
+cat(paste("Training AUC for Model:",calcAUC(as.numeric(pred_train_roc), dtrain[,response]),
+          "\nCalibration AUC for Model:",calcAUC(as.numeric(pred_calb_roc), dcalb[,response]),
+          "\nTest AUC for Model:",calcAUC(as.numeric(pred_test_roc), dtest[,response])))
+
+```
+
+## Naïve Bayes Model
+
+Utilizing the single variable data calculated above we can then use it to setup the Naïve Bayes model. We will use the "e1071" package to set up the model and then compare the AUC socre and the ROC plot with the model from Multi Variable Logistic Regression.
+
+```{r}
+
+f <- paste('as.factor(',response,' > 0) ~ ', paste(sel_vars, collapse=' + '), sep='')
+#f is the formula for the NB model
+
+# variable `nbmodel` below is the model trained from Naïve Bayes  
+nbmodel <- naiveBayes(as.formula(f), data=dtrain)
+
+
+dtrain$nbpred <- predict(nbmodel, newdata=dtrain, type='raw')[,'TRUE']
+dcalb$nbpred <- predict(nbmodel, newdata=dcalb, type='raw')[,'TRUE']
+dtest$nbpred <- predict(nbmodel, newdata=dtest, type='raw')[,'TRUE']
+
+cat(paste("AUC for Training Set Using NB Model:", calcAUC(dtrain$nbpred, dtrain[,response]==truth), "\nAUC for Calibration Set Using NB Model:",calcAUC(dcalb$nbpred, dcalb[,response]==truth), "\nAUC for Test Set Using NB Model:", calcAUC(dtest$nbpred, dtest[,response]==truth)))
+
+
+```
+
+The AUC score for the Naïve Bayes model is actually more than that for the multi variable logistic regression model as seen from the tables above.
+
+```{r}
+cat("Density plot for the predictions from the Naïve Bayes Model")
+
+ggplot(data=dcalb) +
+  geom_density(aes(x=nbpred, color=as.factor(response),
+                   linetype=as.factor(response))) +
+  theme(text=element_text(size=20))
+
+
+
+```
+
+The density plot depicts that the model is effective and would give good results. We will look at the combined ROC curves from the 3 multivariable models later.
+
+
+## KNN Model
+
+First lets find the Hamming distance for the Categorical Variables. We will use the average value from combination of distances calculated between 4 categorical variables.
+```{r}
+
+##k=13
+
+#stringdistmatrix(dtrain$predCONTROLLER_NAME, dtrain$predSUBUNIT, method = c("hamming"))#for distance matrix
+dist1_2<-stringdist(dtrain$predCONTROLLER_NAME, dtrain$predSUBUNIT, method = c("hamming"))#for vector of distance
+new<-dist1_2[dist1_2[1:8162]<Inf]
+
+
+#stringdistmatrix(dtrain$predUG_LOCATION, dtrain$predCOAL_METAL_IND, method = c("hamming"))#for distance matrix
+dist3_4<-stringdist(dtrain$predUG_LOCATION, dtrain$predCOAL_METAL_IND, method = c("hamming"))#for vector of distance
+
+new<-dist3_4[dist3_4[1:8162]<Inf]
+
+
+#stringdistmatrix(dtrain$predCONTROLLER_NAME, dtrain$predCOAL_METAL_IND, method = c("hamming"))#for distance matrix
+dist1_4<-stringdist(dtrain$predCONTROLLER_NAME, dtrain$predCOAL_METAL_IND, method = c("hamming"))#for vector of distance
+
+new<-dist1_4[dist1_4[1:8162]<Inf]
+
+
+#stringdistmatrix(dtrain$predSUBUNIT, dtrain$predCOAL_METAL_IND, method = c("hamming"))#for distance matrix
+dist2_4<-stringdist(dtrain$predSUBUNIT, dtrain$predCOAL_METAL_IND, method = c("hamming"))#for vector of distance
+
+new<-dist2_4[dist2_4[1:8162]<Inf]
+
+
+
+##KNN Modelling for Categorical Variables
+
+nK <- 13
+knnTrain <- dtrain[,sel_vars]
+knnCl <- dtrain[,response]==truth
+knnPredict <- function(df) {
+  knnDecision <- knn(knnTrain, df, knnCl, k=nK, prob=T)
+  ifelse(knnDecision == TRUE,
+         attributes(knnDecision)$prob,
+         1 - attributes(knnDecision)$prob)
+}
+# create a new column in dCalb and dTest to store the predicted probabilities
+dtrain$knnProb <- knnPredict(dtrain[,sel_vars])
+dcalb$knnProb <- knnPredict(dcalb[,sel_vars])
+dtest$knnProb <- knnPredict(dtest[,sel_vars])
+
+
+cat(paste("AUC for Training Set Using KNN Model:", calcAUC(dtrain$knnProb, dtrain[,response]), "\nAUC for Calibration Set Using KNN Model:",calcAUC(dcalb$knnProb, dcalb[,response]), "\nAUC for Test Set Using KNN Model:", calcAUC(dtest$knnProb, dtest[,response])))
+
+cat("Density Plot for the KNN model")
+ggplot(data=dtest) +
+  geom_density(aes(x=knnProb, color=as.factor(response),
+                   linetype=as.factor(response))) +
+  theme(text=element_text(size=20))
+
+
+cat("Comparison of ROC curve for 3 different Multi Variable Models")
+par(mfrow = c(1,1))
+plot_roc(as.numeric(pred_test_roc), dtest[,"response"],colour_id=4)
+plot_roc(as.numeric(dtest$nbpred), dtest[,"response"],colour_id=5, overlaid=T)
+plot_roc(as.numeric(dtest$knnProb), dtest[,"response"],colour_id=6, overlaid=T)
+legend("bottomright",legend=c("Log Model Test Set", "NB Model Test set", "KNN model Test Set"),
+      col=c(4, 5, 6), lty=c(1,1,1),
+      lwd=c(2,2, 2))
+
+cat(paste("AUC for Test set with Multivariable Log Regression:", calcAUC(as.numeric(pred_test_roc), dtest[,response]), "\nAUC for Test Set Using NB Model:",calcAUC(dtest$nbpred, dtest[,response]), "\nAUC for Test Set Using KNN Model:", calcAUC(dtest$knnProb, dtest[,response])))
+
+```
+
+## Conclusion
+We can see that the the KNN model has the highest AUC score for our chosen variables where the model takes 8 feature variables, the Naïve Bayes Model takes in 8 variables as well so the resulting AUC is very close to the one from the KNN model. By comparison the log model does not perform as well with 7 variables as the 8th variable has too many levels and had to be dropped, but it may have given a better score had it had 8 features as well since it does perform well with categorical variables.
+
+This modelling allows us to predict if an incident will result in injuries based on these 8 featiures and the results show that it will be accurate around 90% of the time atleast. This then implies that if improvements are made in these 8 areas in terms of safety policies, injuries as an outcome of incidents can be prevented or reduced significantly.
